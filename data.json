@@ -55,12 +55,7 @@
       "type": "love",
       "startSide": "right",
       "endSide": "left",
-      "waypoints": [
-        {
-          "x": 397,
-          "y": 280
-        }
-      ],
+      "waypoints": [],
       "labels": [
         {
           "id": "start",
