@@ -202,6 +202,7 @@ function CharacterTile({
   isHighlighted,
   isDimmed,
   sectColor,
+  onClick,
   // NEW multi-select props
   isSelected = false,
   onPrimarySelect,
@@ -237,6 +238,18 @@ function CharacterTile({
         top: character.gridY * GRID_SIZE,
         width: TILE_WIDTH,
         height: TILE_HEIGHT
+      },
+      onClick: (e) => {
+        e.stopPropagation();
+        // Prefer built-in multi-select handlers if present
+        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+          onToggleSelect && onToggleSelect();
+        } else if (onPrimarySelect) {
+          onPrimarySelect();
+        } else if (onClick) {
+          // Fallback to legacy click behavior if parent provided one
+          onClick(e);
+        }
       },
       // selection + drag initiation handled on mousedown
       onMouseDown: onMouseDownStart,
