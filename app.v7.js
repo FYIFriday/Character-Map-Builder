@@ -404,6 +404,8 @@ function ConnectionLine({
    * within ANGLE_TOLERANCE_DEG of a tidy angle (0/45/90/etc.). These display
    * while editing and make it easier to visually "land" on the clean angle
    * without forcing a snap.
+   * All hint drawings are wrapped in an SVG group with pointerEvents="none"
+   * to guarantee the hints never intercept drag/click events.
    */
   const renderAngleHints = () => {
     if (!isEditing || !isSelected) return null;
@@ -423,7 +425,6 @@ function ConnectionLine({
         const x2 = midX + ux * HINT_LINE_LENGTH;
         const y2 = midY + uy * HINT_LINE_LENGTH;
 
-        // Hint line
         elems.push(
           React.createElement('line', {
             key: `hint-line-${connection.id}-${i}`,
@@ -431,25 +432,22 @@ function ConnectionLine({
             y1,
             x2,
             y2,
-            stroke: 'rgba(56,189,248,0.6)', // cyan-400 @ ~60%
+            stroke: 'rgba(56,189,248,0.6)',
             strokeWidth: 1,
-            strokeDasharray: '3,6',
-            pointerEvents: 'none'
+            strokeDasharray: '3,6'
           })
         );
-
-        // Angle badge near the midpoint
         elems.push(
           React.createElement(
             'g',
-            { key: `hint-badge-${connection.id}-${i}`, pointerEvents: 'none' },
+            { key: `hint-badge-${connection.id}-${i}` },
             React.createElement('rect', {
               x: midX + 8,
               y: midY - 10,
               width: 34,
               height: 16,
               rx: 3,
-              fill: 'rgba(17,24,39,0.85)', // gray-900 with opacity
+              fill: 'rgba(17,24,39,0.85)',
               stroke: 'rgba(56,189,248,0.6)',
               strokeWidth: 1
             }),
@@ -458,7 +456,7 @@ function ConnectionLine({
               {
                 x: midX + 25,
                 y: midY + 2,
-                fill: 'rgba(191,219,254,0.95)', // blue-100-ish
+                fill: 'rgba(191,219,254,0.95)',
                 fontSize: 10,
                 textAnchor: 'middle'
               },
@@ -468,7 +466,7 @@ function ConnectionLine({
         );
       }
     }
-    return elems;
+    return React.createElement('g', { pointerEvents: 'none' }, elems);
   };
 
   // --- Label helpers ---
@@ -590,8 +588,6 @@ function ConnectionLine({
         onConnectionClick && onConnectionClick(connection.id);
       }
     },
-    // Angle hint overlays (only visible while editing & when selected)
-    ...(renderAngleHints() || []),
     React.createElement('path', {
       d: pathD,
       stroke: lineStyle.color,
@@ -665,6 +661,8 @@ function ConnectionLine({
           }
         });
       }),
+    // Angle hint overlays (non-interactive; drawn under labels/handles)
+    renderAngleHints(),
     // Labels
     ...(labelsArray || []).map((lbl) => renderLabel(lbl))
   );
