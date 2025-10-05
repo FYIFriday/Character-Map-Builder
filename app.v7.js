@@ -197,12 +197,16 @@ function AuthModal({ onAuthenticate, onClose }) {
 
 function CharacterTile({
   character,
-  onClick,
   isEditing,
-  onDragStart,
+  onDragStart, // kept for compatibility if used elsewhere
   isHighlighted,
   isDimmed,
-  sectColor
+  sectColor,
+  // NEW multi-select props
+  isSelected = false,
+  onPrimarySelect,
+  onToggleSelect,
+  onMouseDownStart
 }) {
   const bannerHeight = 40; // Height of name/title banner
   const imageHeight = TILE_HEIGHT - bannerHeight;
@@ -234,9 +238,9 @@ function CharacterTile({
         width: TILE_WIDTH,
         height: TILE_HEIGHT
       },
-      onClick,
-      draggable: isEditing,
-      onDragStart
+      // selection + drag initiation handled on mousedown
+      onMouseDown: onMouseDownStart,
+      draggable: false
     },
     React.createElement(
       'div',
@@ -244,9 +248,15 @@ function CharacterTile({
         className: `relative w-full h-full border-2 ${
           isHighlighted
             ? 'border-yellow-400 shadow-lg shadow-yellow-400/50'
+            : isSelected
+            ? 'border-blue-400 shadow-lg shadow-blue-400/30'
             : 'border-gray-700'
         } rounded-lg overflow-hidden bg-gray-800 ${
-          isHighlighted ? 'ring-4 ring-yellow-400/50' : ''
+          isHighlighted
+            ? 'ring-4 ring-yellow-400/50'
+            : isSelected
+            ? 'ring-2 ring-blue-400/30'
+            : ''
         }`
       },
       React.createElement(
@@ -579,6 +589,46 @@ function ConnectionLine({
     );
   };
 
+  // --- Path interaction helpers (add waypoint by clicking the line) ---
+  const getSVGRelativePoint = (event) => {
+    // Works assuming the SVG is not transformed (no scale/rotate). Good enough for our canvas.
+    const svg = event.currentTarget.ownerSVGElement || event.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    return { x, y };
+  };
+  const distPointToSeg = (px, py, ax, ay, bx, by) => {
+    const abx = bx - ax, aby = by - ay;
+    const apx = px - ax, apy = py - ay;
+    const ab2 = abx * abx + aby * aby || 1;
+    let t = (apx * abx + apy * aby) / ab2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + abx * t;
+    const cy = ay + aby * t;
+    const dx = px - cx, dy = py - cy;
+    return { d2: dx * dx + dy * dy, t, cx, cy };
+  };
+  const findNearestSegment = (pt) => {
+    let best = { idx: 0, d2: Infinity, t: 0, cx: pt.x, cy: pt.y };
+    for (let i = 0; i < allPoints.length - 1; i++) {
+      const a = allPoints[i];
+      const b = allPoints[i + 1];
+      const res = distPointToSeg(pt.x, pt.y, a.x, a.y, b.x, b.y);
+      if (res.d2 < best.d2) best = { idx: i, d2: res.d2, t: res.t, cx: res.cx, cy: res.cy };
+    }
+    return best;
+  };
+  const onPathMouseDown = (e) => {
+    if (!isEditing || !isSelected) return;
+    e.stopPropagation();
+    const pt = getSVGRelativePoint(e);
+    const { idx, cx, cy } = findNearestSegment(pt);
+    // Insert a waypoint at the closest point on the nearest segment
+    onAddWaypoint && onAddWaypoint(connection.id, idx, cx, cy);
+    // NOTE: We don't auto-start drag here (state update is async). Grab the new handle to drag.
+  };
+
   return React.createElement(
     'g',
     {
@@ -595,6 +645,16 @@ function ConnectionLine({
       strokeDasharray,
       fill: 'none'
     }),
+    // Invisible, fat hit-area over the line to add a waypoint where you click
+    isEditing && isSelected &&
+      React.createElement('path', {
+        d: pathD,
+        stroke: 'transparent',
+        strokeWidth: Math.max(14, (lineStyle.thickness || 2) * 4),
+        fill: 'none',
+        pointerEvents: 'stroke', // only the stroke is clickable
+        onMouseDown: onPathMouseDown
+      }),
     React.createElement('circle', { cx: start.x, cy: start.y, r: 4, fill: lineStyle.color }),
     isEditing &&
       isSelected &&
@@ -2491,6 +2551,83 @@ function CharacterMapper() {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState('canvas');
   const canvasRef = useRef(null);
+
+  // --- Multi-select state ---
+const [selectedIds, setSelectedIds] = useState(new Set()); // Set<string>
+const lastSelectedId = useRef(null);
+const setOnlySelected = (id) => {
+  lastSelectedId.current = id;
+  setSelectedIds(new Set([id]));
+};
+const toggleSelected = (id) =>
+  setSelectedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+const isSelected = (id) => selectedIds.has(id);
+
+// --- Global key handlers (Select All / Clear) ---
+useEffect(() => {
+  const onKeyDown = (e) => {
+    // Cmd/Ctrl+A => select all tiles
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      setSelectedIds(new Set(data.characters.map(c => c.id)));
+    }
+    // Escape => clear selection
+    if (e.key === 'Escape') setSelectedIds(new Set());
+  };
+  window.addEventListener('keydown', onKeyDown);
+  return () => window.removeEventListener('keydown', onKeyDown);
+}, [data.characters]);
+
+// --- Window-driven drag for group move ---
+const dragAnchorId = useRef(null);
+const lastDragPos = useRef({ x: 0, y: 0 });
+
+const applyDelta = (dx, dy, anchorId) => {
+  // convert px deltas to grid steps; keep your snap behavior consistent
+  const stepX = Math.round(dx / GRID_SIZE);
+  const stepY = Math.round(dy / GRID_SIZE);
+  if (!stepX && !stepY) return;
+
+  setData(prev => {
+    const group = (selectedIds.size && selectedIds.has(anchorId))
+      ? selectedIds
+      : new Set([anchorId]);
+    return {
+      ...prev,
+      characters: prev.characters.map(c =>
+        group.has(c.id)
+          ? { ...c, gridX: Math.max(0, c.gridX + stepX), gridY: Math.max(0, c.gridY + stepY) }
+          : c
+      )
+    };
+  });
+};
+
+const startWindowDrag = (clientX, clientY, anchorId) => {
+  dragAnchorId.current = anchorId;
+  lastDragPos.current = { x: clientX, y: clientY };
+
+  const onMove = (e) => {
+    if (!dragAnchorId.current) return;
+    const dx = e.clientX - lastDragPos.current.x;
+    const dy = e.clientY - lastDragPos.current.y;
+    if (dx || dy) {
+      applyDelta(dx, dy, dragAnchorId.current);
+      lastDragPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+  const onUp = () => {
+    dragAnchorId.current = null;
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+};
 
   // ---- GitHub publish config (editor-only) ----
 const [publishCfg, setPublishCfg] = useState(() => {
